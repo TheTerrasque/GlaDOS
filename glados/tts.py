@@ -7,9 +7,6 @@ import numpy as np
 import onnxruntime
 import sounddevice as sd
 
-import io
-import sys
-
 # Constants
 MAX_WAV_VALUE = 32767.0
 RATE = 22050
@@ -220,20 +217,10 @@ class Phonemizer:
     espeakVOICE = "en-us"
 
     def __init__(self, espeakng_path: str = ""):
+        self.libc = ctypes.cdll.LoadLibrary("libc.so.6")
+        self.libc.open_memstream.restype = ctypes.POINTER(ctypes.c_char)
         self.lib_espeak = self._load_library(os.path.join(espeakng_path, "libespeak-ng.so"))
         self.set_voice_by_name(self.espeakVOICE.encode("utf-8"))
-
-    def _load_library(self, lib_name):
-        try:
-            if sys.platform.startswith('linux'):
-                return ctypes.CDLL(lib_name)
-            elif sys.platform.startswith('win32'):
-                return ctypes.CDLL(lib_name.replace("so", "dll"))
-            else:
-                raise OSError("Unsupported OS")
-        except Exception as e:
-            print(f"Failed to load library {lib_name}: {str(e)}")
-            sys.exit(1)
 
     def set_voice_by_name(self, name) -> int:
         """Bindings to espeak_SetVoiceByName
@@ -251,6 +238,32 @@ class Phonemizer:
         f_set_voice_by_name.argtypes = [ctypes.c_char_p]
         return f_set_voice_by_name(name)
 
+    def _load_library(self, lib_name, fallback_name=None):
+        """Loads a shared library with an optional fallback."""
+        try:
+            return ctypes.cdll.LoadLibrary(lib_name)
+        except OSError:
+            if fallback_name:
+                print(f"Loading {fallback_name}")
+                return ctypes.cdll.LoadLibrary(fallback_name)
+            else:
+                raise
+
+    def _open_memstream(self):
+        """Opens a memory stream for phoneme output."""
+        buffer = ctypes.c_char_p()
+        size = ctypes.c_size_t()  # Initialize size
+        self.lib_espeak.espeak_Initialize(
+            self.espeakAUDIO_OUTPUT_SYNCHRONOUS, 0, None, 0
+        )
+
+        file = self.libc.open_memstream(ctypes.byref(buffer), ctypes.byref(size))
+        return file, buffer, size
+
+    def _close_memstream(self, file):
+        """Closes the opened memory stream."""
+        self.libc.fclose(file)
+
     def synthesize_phonemes(self, text):
         """
         Converts the given text to phonemes.
@@ -266,13 +279,17 @@ class Phonemizer:
             The phonemes generated from the text.
         """
         # phonemes_file, phonemes_buffer = self._open_memstream()
-        memory_file = io.BytesIO()
+        (
+            phonemes_file,
+            phonemes_buffer,
+            size,
+        ) = self._open_memstream()  # Capture the size
 
         try:
             phoneme_flags = self.espeakPHONEMES_IPA
             synth_flags = self.espeakCHARS_AUTO | self.espeakPHONEMES
 
-            self.lib_espeak.espeak_SetPhonemeTrace(phoneme_flags, memory_file)
+            self.lib_espeak.espeak_SetPhonemeTrace(phoneme_flags, phonemes_file)
             text_bytes = text.encode("utf-8")
 
             self.lib_espeak.espeak_Synth(
@@ -285,9 +302,13 @@ class Phonemizer:
                 None,  # unique_speaker,
                 None,  # user_data,
             )
-            memory_file.seek(0)
-            phonemes_data = memory_file.read()
-            phonemes = phonemes_data.decode('utf-8')
+            self.libc.fflush(phonemes_file)
+            # phonemes = ctypes.string_at(phonemes_buffer)
+            phonemes_data_length = size.value  # Get the actual size of the phoneme data
+            phonemes = ctypes.string_at(
+                phonemes_buffer, phonemes_data_length
+            )  # Use size to read buffer
+            phonemes = phonemes.decode("utf-8")
 
             # There was a weird bug described here:
             # https://github.com/espeak-ng/espeak-ng/issues/694
@@ -301,7 +322,7 @@ class Phonemizer:
         except Exception as e:
             print("Error in phonemization:", str(e))
         finally:
-            memory_file.close()
+            self._close_memstream(phonemes_file)
 
 
 class Synthesizer:
