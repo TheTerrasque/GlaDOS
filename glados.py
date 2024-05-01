@@ -239,7 +239,7 @@ class Glados:
         if detected_text:
             logger.success(f"ASR text: '{detected_text}'")
 
-            if self.wake_word is not None:
+            if self.wake_word:
                 if self._wakeword_detected(detected_text):
                     logger.info("Wake word detected!")
 

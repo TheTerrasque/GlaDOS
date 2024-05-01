@@ -488,6 +488,7 @@ class TTSEngine:
 
     def generate_speech_audio(self, text: str) -> bytes:
         phonemes = self.phonemizer.synthesize_phonemes(text)
+        print("Phonemes: ",phonemes)
         audio = []
         for sentence in phonemes:
             audio_chunk = self.synthesizer.say_phonemes(sentence)

@@ -168,7 +168,7 @@ class VoiceRecognition:
         if detected_text:
             logger.info(f"Detected: '{detected_text}'")
 
-            if self.wake_word is not None:
+            if self.wake_word:
                 if self._wakeword_detected(detected_text):
                     logger.info("Wake word detected!")
                     self.func(detected_text)
