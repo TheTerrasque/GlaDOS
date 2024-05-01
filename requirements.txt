@@ -6,3 +6,4 @@ loguru
 jinja2
 requests
 tqdm
+pydantic-settings
