@@ -105,7 +105,7 @@ class Glados:
         self.asr_model = asr.ASR(model=str(Path.cwd() / "models" / settings.ASR_MODEL))
 
     def _setup_tts_model(self):
-        self.tts = tts.TTSEngine()
+        self.tts = tts.TTSEngine(espeakng_path=settings.ESPEAK_NG_PATH)
 
     def _setup_llama_model(self):
         model_path = Path.cwd() / "models" / settings.LLM_MODEL

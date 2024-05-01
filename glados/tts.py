@@ -1,4 +1,5 @@
 import ctypes
+import os
 import re
 from typing import List, Optional
 
@@ -218,8 +219,8 @@ class Phonemizer:
     espeakAUDIO_OUTPUT_SYNCHRONOUS = 0x02
     espeakVOICE = "en-us"
 
-    def __init__(self):
-        self.lib_espeak = self._load_library(r"C:\\Program Files\\eSpeak NG\\libespeak-ng")
+    def __init__(self, espeakng_path: str = ""):
+        self.lib_espeak = self._load_library(os.path.join(espeakng_path, "libespeak-ng.so"))
         self.set_voice_by_name(self.espeakVOICE.encode("utf-8"))
 
     def _load_library(self, lib_name):
@@ -405,8 +406,8 @@ class Synthesizer:
 
 
 class TTSEngine:
-    def __init__(self, model_path: str = MODEL_PATH, use_cuda: bool = USE_CUDA):
-        self.phonemizer = Phonemizer()
+    def __init__(self, model_path: str = MODEL_PATH, use_cuda: bool = USE_CUDA, espeakng_path: str = ""):
+        self.phonemizer = Phonemizer(espeakng_path)
         self.synthesizer = Synthesizer(model_path, use_cuda)
 
     def generate_speech_audio(self, text: str) -> bytes:

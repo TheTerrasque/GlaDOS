@@ -14,10 +14,13 @@ class Settings(BaseSettings):
     # LLM_MODEL = "Meta-Llama-3-70B-Instruct.IQ4_XS.gguf"
     LLM_MODEL: str = "Meta-Llama-3-8B-Instruct-Q6_K.gguf"  # This model is smaller and faster, but gets confused more easily
     LLM_STOP_SEQUENCE: str = "<|eot_id|>"  # End of sentence token for Meta-Llama-3
+
     LLAMA_SERVER_PATH: str = "/home/dnhkng/Documents/LLM/llama.cpp"
     LLAMA_SERVER_URL: str = "http://localhost:8080/completion"
     LLAMA_SERVER_HEADERS: dict = {"Authorization": "Bearer your_api_key_here"}
     LLAMA3_TEMPLATE: str = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message.role + '<|end_header_id|>\n\n'+ message.content | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"
+
+    ESPEAK_NG_PATH: str = ""
 
     PAUSE_TIME: float = 0.05  # Time to wait between processing loops
     SAMPLE_RATE: int = 16000  # Sample rate for input stream
