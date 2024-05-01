@@ -1,6 +1,8 @@
 import ctypes
 import os
 import re
+import sys
+import tempfile
 from typing import List, Optional
 
 import numpy as np
@@ -217,8 +219,15 @@ class Phonemizer:
     espeakVOICE = "en-us"
 
     def __init__(self, espeakng_path: str = ""):
-        self.libc = ctypes.cdll.LoadLibrary("libc.so.6")
-        self.libc.open_memstream.restype = ctypes.POINTER(ctypes.c_char)
+        if sys.platform.startswith('win32'):
+            self.libc = None
+            self.msvcrt = ctypes.CDLL('msvcrt.dll')
+            self.msvcrt.fseek.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.c_int]
+            self.msvcrt.fread.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_void_p]
+            self.msvcrt.fread.restype = ctypes.c_size_t
+        else:
+            self.libc = ctypes.cdll.LoadLibrary("libc.so.6")
+            self.libc.open_memstream.restype = ctypes.POINTER(ctypes.c_char)
         self.lib_espeak = self._load_library(os.path.join(espeakng_path, "libespeak-ng.so"))
         self.set_voice_by_name(self.espeakVOICE.encode("utf-8"))
 
@@ -238,7 +247,19 @@ class Phonemizer:
         f_set_voice_by_name.argtypes = [ctypes.c_char_p]
         return f_set_voice_by_name(name)
 
-    def _load_library(self, lib_name, fallback_name=None):
+    def _load_library(self, lib_name):
+        try:
+            if sys.platform.startswith('linux'):
+                return ctypes.CDLL(lib_name)
+            elif sys.platform.startswith('win32'):
+                return ctypes.CDLL(lib_name.replace("so", "dll"))
+            else:
+                raise OSError("Unsupported OS")
+        except Exception as e:
+            print(f"Failed to load library {lib_name}: {str(e)}")
+            raise
+
+    def _load_library_(self, lib_name, fallback_name=None):
         """Loads a shared library with an optional fallback."""
         try:
             return ctypes.cdll.LoadLibrary(lib_name)
@@ -249,13 +270,20 @@ class Phonemizer:
             else:
                 raise
 
+    def _open_tempfile(self):
+        # Create a temporary file and return the file descriptor and path
+        temp_fd, temp_path = tempfile.mkstemp()
+        # Convert file descriptor to FILE* using fdopen
+        FILE_p = ctypes.POINTER(ctypes.c_void_p)
+        self.msvcrt._fdopen.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        self.msvcrt._fdopen.restype = ctypes.POINTER(ctypes.c_void_p)
+        c_file = self.msvcrt._fdopen(temp_fd, b'w+b')
+        return c_file, temp_path
+
     def _open_memstream(self):
         """Opens a memory stream for phoneme output."""
         buffer = ctypes.c_char_p()
         size = ctypes.c_size_t()  # Initialize size
-        self.lib_espeak.espeak_Initialize(
-            self.espeakAUDIO_OUTPUT_SYNCHRONOUS, 0, None, 0
-        )
 
         file = self.libc.open_memstream(ctypes.byref(buffer), ctypes.byref(size))
         return file, buffer, size
@@ -279,19 +307,29 @@ class Phonemizer:
             The phonemes generated from the text.
         """
         # phonemes_file, phonemes_buffer = self._open_memstream()
-        (
-            phonemes_file,
-            phonemes_buffer,
-            size,
-        ) = self._open_memstream()  # Capture the size
+        if self.libc:
+            (
+                phonemes_file,
+                phonemes_buffer,
+                size,
+            ) = self._open_memstream()  # Capture the size
+        else:
+            phonemes_file, phonemes_path = self._open_tempfile()
+
+        self.lib_espeak.espeak_Initialize(
+            self.espeakAUDIO_OUTPUT_SYNCHRONOUS, 0, None, 0
+        )
 
         try:
             phoneme_flags = self.espeakPHONEMES_IPA
             synth_flags = self.espeakCHARS_AUTO | self.espeakPHONEMES
 
+            print("Calling espeak_SetPhonemeTrace")
             self.lib_espeak.espeak_SetPhonemeTrace(phoneme_flags, phonemes_file)
             text_bytes = text.encode("utf-8")
 
+
+            print("Calling espeak_Synth")
             self.lib_espeak.espeak_Synth(
                 text_bytes,
                 0,  # buflength (unused in AUDIO_OUTPUT_SYNCHRONOUS mode)
@@ -302,13 +340,26 @@ class Phonemizer:
                 None,  # unique_speaker,
                 None,  # user_data,
             )
-            self.libc.fflush(phonemes_file)
+
+            print("Retrieving phonemes")
+            if self.libc:
+                self.libc.fflush(phonemes_file)
+                phonemes_data_length = size.value  # Get the actual size of the phoneme data
+                phonemes = ctypes.string_at(
+                    phonemes_buffer, phonemes_data_length
+                )  # Use size to read buffer
+                phonemes = phonemes.decode("utf-8")                
+            else:
+                print("Flushing")
+                self.msvcrt.fflush(phonemes_file)
+                print("Seeking")
+                self.msvcrt.fseek(phonemes_file, 0, ctypes.c_int(0))
+                print("Reading")
+                buffer = ctypes.create_string_buffer(10000)
+                num_bytes_read = self.msvcrt.fread(buffer, 1, 10000, phonemes_file)
+                phonemes = buffer[:num_bytes_read].decode('utf-8')
             # phonemes = ctypes.string_at(phonemes_buffer)
-            phonemes_data_length = size.value  # Get the actual size of the phoneme data
-            phonemes = ctypes.string_at(
-                phonemes_buffer, phonemes_data_length
-            )  # Use size to read buffer
-            phonemes = phonemes.decode("utf-8")
+
 
             # There was a weird bug described here:
             # https://github.com/espeak-ng/espeak-ng/issues/694
@@ -322,7 +373,11 @@ class Phonemizer:
         except Exception as e:
             print("Error in phonemization:", str(e))
         finally:
-            self._close_memstream(phonemes_file)
+            if self.libc:
+                self._close_memstream(phonemes_file)
+            else:
+                self.msvcrt.fclose(phonemes_file)
+                #os.unlink(phonemes_path)
 
 
 class Synthesizer:
