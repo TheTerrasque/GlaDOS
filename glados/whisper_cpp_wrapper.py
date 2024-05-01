@@ -571,6 +571,11 @@ class LibraryLoader:
                     yield os.path.abspath(
                         os.path.join(os.path.dirname(__file__), fmt % libname)
                     )
+                # Also check subdir "whisper" from this file
+                for fmt in self.name_formats:
+                    yield os.path.abspath(
+                        os.path.join(os.path.dirname(__file__), "whisper", fmt % libname)
+                    )
 
             # now, use the ctypes tools to try to find the library
             for fmt in self.name_formats:
